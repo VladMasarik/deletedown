@@ -65,9 +65,69 @@ TILESET_TYPES = [
 
 
 
+# current object == the object to search through, either it has the key or not
+# fields to search == list of already parsed single key
+def get_field(currentObject, subkeys):
+    # Search for the key in the current object
+    for subkey in subkeys:
+        # Dict with our subkey
+        if isinstance(currentObject, dict) and subkey in currentObject:
+            currentObject = currentObject[subkey]
+        # List of dicts, and each dict has this subkey? e.g. currentObject = [{'x': 4, 'y': 8}, {'x': 5, 'y': 10}]
+        elif isinstance(currentObject, list) and all(subkey in listElement for listElement in currentObject):
+            # Pull from all subkeys, or just the one
+            if len(currentObject) == 1:
+                if isinstance(currentObject[0], dict):
+                    currentObject = currentObject[0][subkey]
+                else:
+                    currentObject = currentObject[0]
+            else:
+                currentObject = [listElement[subkey] for listElement in currentObject] # Create list of the subkey values, e.g. [{'x': 4, 'y': 8}, {'x': 5, 'y': 10}] will output [8, 10] if subkey is "y"
+        # Stop if any subkey is not found
+        else:
+            return None
+    return currentObject # We have went as deep as we wanted, so return whatever we desired
 
 
-def item_values(item, fields, none_string="None"):
+
+
+# current item, but also has access to the parents, and a list of fields to searhc 
+# Check the current item if it has the key that we are searching for
+# If not, check recursively if parent has the key
+def get_field_from_item(allItems, currentItem, subkeys, none_string):
+    foundValues = get_field(currentItem, subkeys)
+    if foundValues is None:
+        if "copy-from" in currentItem:
+            parentID = currentItem["copy-from"]
+            parentItem = allItems[parentID]
+            foundValues = get_field_from_item(parentItem, subkeys)
+    
+    if isinstance(foundValues, dict):
+        if set(foundValues.keys()) <= I18N_DICT_KEYS_SET: # check if the content is internationalized values
+            first_good_value = none_string
+            for key in I18N_DICT_KEYS:
+                value = foundValues.get(key, None)
+                if value:
+                    first_good_value = value
+                    break
+            return first_good_value
+        else:
+            return str(foundValues)
+    # Separate lists with slashes
+    elif isinstance(foundValues, list):
+        joinList = [listElement or none_string for listElement in foundValues]
+        return " / ".join(joinList)
+    else:
+        if foundValues is None:
+            return none_string
+        else:
+            return str(foundValues)
+    
+
+
+# currnetObject == item to search through
+# fieldsToSearch == list of string keys
+def item_values(allItems, currentItem, fieldsToSearch, none_string="None"):
     """Return item values from within the given fields, converted to strings.
 
     Fields may be plain string or numeric values:
@@ -95,62 +155,14 @@ def item_values(item, fields, none_string="None"):
         ['d6', 'die', 'dice']
 
     """
-
-
-
-
     values = []
-    def _get_value(it, subkeys):
-        for subkey in subkeys:
-            if isinstance(it, dict):
-                if "copy-from" in it:  # Handle copy-from
-                    it = item[it["copy-from"]]  # Access the copied data
-                    # Recursively traverse the copied structure
-                    return _get_value(it, subkeys)
-                elif subkey in it:
-                    it = it[subkey]
-                elif isinstance(it, list):
-                    it = [_get_value(o, subkeys) for o in it]
-                else:
-                    return none_string
-            elif isinstance(it, list):
-                if any(subkey in o for o in it):
-                    it = [_get_value(o, subkeys) for o in it]
-                else:
-                    return none_string
-            else:
-                return none_string
-        return it
-    
-    for field in fields:
+    for field in fieldsToSearch:
+        # Split into subkeys if needed
         if "." in field:
-            subkeys = field.split(".")
+            fieldSubkeys = field.split(".")
         else:
-            subkeys = [field]
-        # Descend into dotted keys
-        it = _get_value(item, subkeys)
-
-        if isinstance(it, dict):
-            if set(it.keys()) <= I18N_DICT_KEYS_SET:
-                # it dict contains only i18zed values
-                first_good_value = None
-                for k in I18N_DICT_KEYS:
-                    value = it.get(k, None)
-                    if value:
-                        first_good_value = value
-                        break
-                values.append("%s" % first_good_value or none_string)
-            else:
-                # Make dict presentable
-                values.append("%s" % it.items())
-        # Separate lists with slashes
-        elif isinstance(it, list):
-            values.append(" / ".join(
-                "%s" % i if i is not None else none_string for i in it))
-        # Otherwise just force string
-        else:
-            values.append("%s" % it if it is not None else none_string)
-
+            fieldSubkeys = [field]
+        values.append(get_field_from_item(allItems, currentItem, fieldSubkeys, none_string))
     return values
 
 
@@ -231,7 +243,27 @@ class CDDAValues:
             if types_filter and item.get('type') not in types_filter:
                 continue
 
-            self.output.row(item_values(item, columns, none_string))
+            self.output.row(item_values(data, item, columns, none_string))
+
+
+        relevantItems = {}
+
+        for item in data:
+            if types_filter and item.get('type') not in types_filter:
+                continue
+            if "id" in item.keys():
+                relevantItems[item["id"]] = item
+            elif "abstract" in item.keys():
+                relevantItems[item["abstract"]] = item
+            else:
+                print("items has no ID or abstract", item)
+                continue
+        for item in data: # goes over literally everything but only type that i want
+            if types_filter and item.get('type') not in types_filter:
+                continue
+            self.output.row(item_values(relevantItems, item, columns, none_string))
+
+
 
 
 if __name__ == "__main__":
@@ -245,3 +277,6 @@ if __name__ == "__main__":
     worker = CDDAValues(args.format)
     worker.print_table(
         json_data, args.columns, args.type, args.nonestring, args.with_header)
+
+
+
