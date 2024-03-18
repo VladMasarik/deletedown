@@ -64,6 +64,9 @@ TILESET_TYPES = [
     "TOOL_ARMOR", "TOOLMOD", "trap", "vehicle_part", "WHEEL"]
 
 
+
+
+
 def item_values(item, fields, none_string="None"):
     """Return item values from within the given fields, converted to strings.
 
@@ -92,32 +95,40 @@ def item_values(item, fields, none_string="None"):
         ['d6', 'die', 'dice']
 
     """
+
+
+
+
     values = []
+    def _get_value(it, subkeys):
+        for subkey in subkeys:
+            if isinstance(it, dict):
+                if "copy-from" in it:  # Handle copy-from
+                    it = item[it["copy-from"]]  # Access the copied data
+                    # Recursively traverse the copied structure
+                    return _get_value(it, subkeys)
+                elif subkey in it:
+                    it = it[subkey]
+                elif isinstance(it, list):
+                    it = [_get_value(o, subkeys) for o in it]
+                else:
+                    return none_string
+            elif isinstance(it, list):
+                if any(subkey in o for o in it):
+                    it = [_get_value(o, subkeys) for o in it]
+                else:
+                    return none_string
+            else:
+                return none_string
+        return it
+    
     for field in fields:
         if "." in field:
             subkeys = field.split(".")
         else:
             subkeys = [field]
         # Descend into dotted keys
-        it = item
-        for subkey in subkeys:
-            # Is it a dict with this subkey?
-            if isinstance(it, dict) and subkey in it:
-                it = it[subkey]
-            # Is it a list of dicts having this subkey?
-            elif isinstance(it, list) and all(subkey in o for o in it):
-                # Pull from all subkeys, or just the one
-                if len(it) == 1:
-                    if isinstance(it[0], dict):
-                        it = it[0][subkey]
-                    else:
-                        it = it[0]
-                else:
-                    it = [i[subkey] for i in it]
-            # Stop if any subkey is not found
-            else:
-                it = none_string
-                break
+        it = _get_value(item, subkeys)
 
         if isinstance(it, dict):
             if set(it.keys()) <= I18N_DICT_KEYS_SET:
